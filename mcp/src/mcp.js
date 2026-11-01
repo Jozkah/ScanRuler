@@ -24,8 +24,8 @@
 
 import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { mkdir, open, readdir, readFile, stat, writeFile } from 'node:fs/promises'
-import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
+import { mkdir, open, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { absolute, agentJson, batchedPicture, fileKind, imageContent, inputFor, relativeFrom, replacesSession, saveFileResult, TEXT_FILES, toolFor, toolName, waitIn, withFiles, wholeUtf8, writeNew } from './tools.js'
@@ -363,6 +363,42 @@ const failure = (e) => {
   const code = e?.code ?? 'failed'
   const message = e?.message ?? String(e)
   return { ...text(`${code}: ${message}`), isError: true }
+}
+
+/** Whether `target` lies in `folder` — or is it, with `orSame`. A name that
+ *  merely starts with two dots, such as "..notes.md", is in it; only a
+ *  ".." segment climbs out. */
+function liesIn(folder, target, orSame = false) {
+  const r = relative(folder, target)
+  if (r === '') return orSame
+  return r !== '..' && !r.startsWith(`..${sep}`) && !isAbsolute(r)
+}
+
+/** `path` with every link in it followed: the real path of the deepest
+ *  part that is there, the rest as given — a file about to be written is
+ *  not there yet, but the folder it goes into may be a link. */
+async function realOf(path) {
+  const tail = []
+  for (let at = path; ; ) {
+    try {
+      return join(await realpath(at), ...tail)
+    } catch {
+      const up = dirname(at)
+      if (up === at) return path
+      tail.unshift(basename(at))
+      at = up
+    }
+  }
+}
+
+/** The folders of `folders` that `target` lies in both as written and with
+ *  links followed: a link in the scan's folder that points elsewhere does
+ *  not carry scanruler_read, _write or _files out of it. */
+async function holding(folders, target, orSame = false) {
+  const real = await realOf(target)
+  const out = []
+  for (const folder of folders) if (liesIn(folder, target, orSame) && liesIn(await realOf(folder), real, orSame)) out.push(folder)
+  return out
 }
 
 /** What is wrong with `args` against a tool's input schema, as a message —
@@ -1110,11 +1146,7 @@ export function createMcpServer({
     }
     if (typeof path === 'string' && path.split(/[\\/]/).includes('..')) throw { code: 'invalid_input', message: 'path: ".." is not taken — give a folder in the scan’s folder or under it.' }
     const folder = typeof path === 'string' && path ? (isAbsolute(path) ? resolve(path) : resolve(folders[0], path)) : folders[0]
-    const within = (f) => {
-      const r = relative(f, folder)
-      return r === '' || (!r.startsWith('..') && !isAbsolute(r))
-    }
-    if (!folders.some(within)) throw { code: 'invalid_input', message: `path: ${folder} is outside the folders a scan or a project was opened from — ${folders.join(', ')}.` }
+    if ((await holding(folders, folder, true)).length === 0) throw { code: 'invalid_input', message: `path: ${folder} is outside the folders a scan or a project was opened from — ${folders.join(', ')}.` }
     let entries
     try {
       entries = await readdir(folder, { withFileTypes: true })
@@ -1152,13 +1184,9 @@ export function createMcpServer({
     if (path.split(/[\\/]/).includes('..')) throw { code: 'invalid_input', message: 'path: ".." is not taken — give a path in the scan’s folder or under it.' }
     const folders = knownFolders()
     const target = resolve(folders[0] ?? outDir, path)
-    const inside = (folder) => {
-      const r = relative(folder, target)
-      return r !== '' && !r.startsWith('..') && !isAbsolute(r)
-    }
     if (!spilled.has(target)) {
       if (folders.length === 0) throw { code: 'invalid_state', message: 'This server has opened no scan or project from a folder, so it has none to read from. Open the scan with scan_open (or a project with project_load) by its path first.' }
-      if (!folders.some(inside)) throw { code: 'invalid_input', message: `path: ${target} is outside the folders a scan or a project was opened from — ${folders.join(', ')}.` }
+      if ((await holding(folders, target)).length === 0) throw { code: 'invalid_input', message: `path: ${target} is outside the folders a scan or a project was opened from — ${folders.join(', ')}.` }
     }
     const most = Math.min(limit, answerCap)
     let size
@@ -1223,18 +1251,15 @@ export function createMcpServer({
       throw { code: 'invalid_state', message: 'This server has opened no scan or project from a folder, so it has none to write into. Open the scan with scan_open (or a project with project_load) by its path first — its folder is where the file goes — or write the file yourself.' }
     }
     const target = isAbsolute(path) ? resolve(path) : resolve(folders[0], path)
-    const inside = (folder) => {
-      const r = relative(folder, target)
-      return r !== '' && !r.startsWith('..') && !isAbsolute(r)
-    }
-    if (!folders.some(inside)) {
+    const holders = await holding(folders, target)
+    if (holders.length === 0) {
       throw { code: 'invalid_input', message: `path: ${target} is outside the folders a scan or a project was opened from — ${folders.join(', ')}. Give a path in one of them.` }
     }
     // A scan folder may sit inside a code project, where a hidden folder
     // (.claude, .github, .vscode) or an agent's instruction file is read as
     // settings or instructions by other tools later run there; those are
     // not written.
-    if (folders.filter(inside).some((folder) => relative(folder, target).split(/[\\/]/).some((part) => part.startsWith('.')))) {
+    if (holders.some((folder) => relative(folder, target).split(/[\\/]/).some((part) => part.startsWith('.')))) {
       throw { code: 'invalid_input', message: 'path: a hidden file or folder (a name starting with ".") is not written — give a plain name.' }
     }
     if (PROTECTED_NAMES.includes(basename(target).toLowerCase())) {
