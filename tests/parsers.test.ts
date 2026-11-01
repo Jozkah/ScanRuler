@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import { PLY_KEEP_WINDING, parsePLY } from '../src/core/parsers/ply'
 import { parseOBJ } from '../src/core/parsers/obj'
+import { parseSTL } from '../src/core/parsers/stl'
 
 /** One right triangle, as a binary little-endian PLY with the given header
  *  comment lines. Comments may carry multi-byte UTF-8 — that is the point. */
@@ -57,5 +58,26 @@ describe('OBJ parsing', () => {
     const mesh = parseOBJ(new TextEncoder().encode(text).buffer)
     expect(Array.from(mesh.positions)).toEqual([0, 0, 0, 1, 0, 0, 0, 1, 0])
     expect(Array.from(mesh.indices!)).toEqual([0, 1, 2])
+  })
+})
+
+describe('STL parsing', () => {
+  it('reads a binary STL whose header says "solid" and whose size is not exact', () => {
+    // CAD exporters write "solid …" into binary headers, and padding or a
+    // truncated download leaves the size off the triangle count.
+    const buf = new ArrayBuffer(84 + 50 + 2)
+    const bytes = new Uint8Array(buf)
+    bytes.set(new TextEncoder().encode('solid exported by CAD'), 0)
+    const dv = new DataView(buf)
+    dv.setUint32(80, 1, true)
+    ;[0, 0, 0, 1, 0, 0, 0, 1, 0].forEach((v, i) => dv.setFloat32(84 + 12 + i * 4, v, true))
+    const mesh = parseSTL(buf)
+    expect(Array.from(mesh.positions)).toEqual([0, 0, 0, 1, 0, 0, 0, 1, 0])
+  })
+
+  it('still refuses an ASCII STL with no triangles', () => {
+    expect(() => parseSTL(new TextEncoder().encode('solid empty\nendsolid empty\n').buffer)).toThrow(
+      'Could not read triangles from ASCII STL.',
+    )
   })
 })

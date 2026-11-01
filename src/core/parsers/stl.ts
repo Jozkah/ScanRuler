@@ -15,7 +15,17 @@ export function parseSTL(buffer: ArrayBuffer, onProgress?: (text: string) => voi
     if (84 + triCount * 50 === buffer.byteLength) return parseBinary(dv, triCount, onProgress)
   }
   const head = new TextDecoder().decode(new Uint8Array(buffer, 0, Math.min(512, buffer.byteLength)))
-  if (/^\s*solid/.test(head)) return parseAscii(buffer, onProgress)
+  if (/^\s*solid/.test(head)) {
+    // CAD exporters write "solid" into binary headers too, and padding or a
+    // truncated download leaves such a file off its exact size. When the
+    // text reading finds no triangles, the size-tolerant binary read below
+    // gets its turn rather than the file being refused.
+    try {
+      return parseAscii(buffer, onProgress)
+    } catch (err) {
+      if (buffer.byteLength < 84) throw err
+    }
+  }
   if (buffer.byteLength >= 84) {
     const dv = new DataView(buffer)
     return parseBinary(dv, Math.floor((buffer.byteLength - 84) / 50), onProgress)
