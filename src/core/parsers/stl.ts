@@ -5,6 +5,7 @@
 // skipped; the normals are worked out from the welded mesh instead.
 
 import type { ParsedMesh } from '../types'
+import { decodeText } from './text'
 
 /** Binary if the byte length matches the triangle count in the header;
  *  some binary files start with "solid", so the size check comes first. */
@@ -19,11 +20,12 @@ export function parseSTL(buffer: ArrayBuffer, onProgress?: (text: string) => voi
     // CAD exporters write "solid" into binary headers too, and padding or a
     // truncated download leaves such a file off its exact size. When the
     // text reading finds no triangles, the size-tolerant binary read below
-    // gets its turn rather than the file being refused.
+    // gets its turn rather than the file being refused. Any other failure,
+    // such as text too long to decode, stands.
     try {
       return parseAscii(buffer, onProgress)
     } catch (err) {
-      if (buffer.byteLength < 84) throw err
+      if (buffer.byteLength < 84 || !(err instanceof Error && err.message === NO_TRIANGLES)) throw err
     }
   }
   if (buffer.byteLength >= 84) {
@@ -51,9 +53,11 @@ function parseBinary(dv: DataView, triCount: number, onProgress?: (text: string)
   return { kind: 'soup', positions }
 }
 
+const NO_TRIANGLES = 'Could not read triangles from ASCII STL.'
+
 function parseAscii(buffer: ArrayBuffer, onProgress?: (text: string) => void): ParsedMesh {
   onProgress?.('Reading STL…')
-  const text = new TextDecoder().decode(buffer)
+  const text = decodeText(buffer, 'ASCII STL', 'Export it as binary STL instead.')
   const re = /vertex\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)/g
   const coords: number[] = []
   let m: RegExpExecArray | null
@@ -61,7 +65,7 @@ function parseAscii(buffer: ArrayBuffer, onProgress?: (text: string) => void): P
     coords.push(parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3]))
   }
   if (coords.length === 0 || coords.length % 9 !== 0) {
-    throw new Error('Could not read triangles from ASCII STL.')
+    throw new Error(NO_TRIANGLES)
   }
   return { kind: 'soup', positions: Float32Array.from(coords) }
 }

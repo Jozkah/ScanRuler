@@ -26,6 +26,7 @@
 
 import { unzipSync, strFromU8 } from 'fflate'
 import type { ParsedMesh } from '../types'
+import { decodeText } from './text'
 import { baseName, sampleTexture, type ObjCompanions, type TextureImage } from './objTexture'
 
 /** What one millimetre is in each unit a 3MF may be in — what its
@@ -400,7 +401,7 @@ export function parse3MF(buffer: ArrayBuffer, onProgress?: (text: string) => voi
 
   const rootPath = rootModelPath(files)
   const models = new Map<string, ModelFile>()
-  const root = readModel(strFromU8(files[rootPath]), 1)
+  const root = readModel(decodeText(files[rootPath], '3MF model'), 1)
   models.set(rootPath, root)
   const modelAt = (path: string | undefined): ModelFile => {
     if (!path) return root
@@ -409,7 +410,7 @@ export function parse3MF(buffer: ArrayBuffer, onProgress?: (text: string) => voi
     if (!m) {
       const bytes = files[key]
       if (!bytes) throw new Error(`This 3MF names ${path}, which it does not hold.`)
-      m = readModel(strFromU8(bytes), root.scale)
+      m = readModel(decodeText(bytes, '3MF model'), root.scale)
       models.set(key, m)
     }
     return m

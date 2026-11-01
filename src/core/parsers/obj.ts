@@ -9,11 +9,12 @@
 // supported.
 
 import type { ParsedMesh } from '../types'
+import { decodeText } from './text'
 import { bakeObjTexture, mtllibNames, type ObjCompanions } from './objTexture'
 
 export function parseOBJ(buffer: ArrayBuffer, onProgress?: (text: string) => void, companions?: ObjCompanions): ParsedMesh {
   onProgress?.('Reading OBJ…')
-  const text = new TextDecoder().decode(buffer)
+  const text = decodeText(buffer, 'OBJ', 'Export it as binary PLY or STL instead.')
   const coords: number[] = []
   // Per vertex, the colour the "v x y z r g b" extension gives it, or -1.
   const vertexColor: number[] = []

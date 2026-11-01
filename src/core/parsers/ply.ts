@@ -6,6 +6,7 @@
 // (PLY_KEEP_WINDING) keeps it as written instead of having it guessed again.
 
 import type { ParsedMesh } from '../types'
+import { decodeText } from './text'
 
 interface PlyProperty {
   name: string
@@ -320,7 +321,7 @@ function parseAsciiBody(
   onProgress?: (text: string) => void,
 ): ParsedMesh {
   onProgress?.('Reading PLY…')
-  const body = new TextDecoder().decode(bytes.subarray(bodyStart))
+  const body = decodeText(bytes.subarray(bodyStart), 'ASCII PLY', 'Export it as binary PLY instead.')
   const tokens = body.split(/\s+/).filter((t) => t.length > 0)
   let ti = 0
   let positions: Float32Array | null = null

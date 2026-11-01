@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PLY_KEEP_WINDING, parsePLY } from '../src/core/parsers/ply'
 import { parseOBJ } from '../src/core/parsers/obj'
 import { parseSTL } from '../src/core/parsers/stl'
@@ -190,5 +190,36 @@ describe('PLY header counts', () => {
       [...TRI, 0xff, 0xff, 0xff, 0x3f]), /PLY/)
     timed(plyOf('binary_little_endian', ['element vertex -3', ...XYZ, 'element face 1',
       'property list uchar int vertex_indices'], TRI), /PLY/)
+  })
+})
+
+describe('text too long for one string', () => {
+  // Browsers throw a bare RangeError past about 512 MiB of text. A decoder
+  // that does so for anything over 600 bytes (more than the 512-byte STL head) stands in for such a file.
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+  const RealDecoder = TextDecoder
+  const stubDecoder = () => {
+    vi.stubGlobal('TextDecoder', class extends RealDecoder {
+      decode(input?: AllowSharedBufferSource, options?: TextDecodeOptions): string {
+        if (input && input.byteLength > 600) throw new RangeError('Invalid string length')
+        return super.decode(input, options)
+      }
+    })
+  }
+  const pad = '#'.repeat(700) + '\n'
+  const enc = (text: string) => new TextEncoder().encode(text).buffer
+
+  it('says the ASCII file is too large instead of throwing a RangeError', () => {
+    stubDecoder()
+    const stl = enc(`solid big\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid big\n${' '.repeat(700)}`)
+    expect(() => parseSTL(stl)).toThrow('This ASCII STL file is too large to read as text')
+    expect(() => parseOBJ(enc(`${pad}v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n`))).toThrow(
+      'This OBJ file is too large to read as text',
+    )
+    const ply = plyOf('ascii', ['element vertex 3', ...XYZ, 'element face 1', 'property list uchar int vertex_indices'],
+      `0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n${' '.repeat(700)}`)
+    expect(() => parsePLY(ply)).toThrow('This ASCII PLY file is too large to read as text')
   })
 })
